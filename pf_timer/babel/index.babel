@@ -1,0 +1,152 @@
+const { pure, componentFromStream } = Recompose
+const { Observable, BehaviorSubject, Scheduler } = Rx
+
+Recompose.setObservableConfig({
+  fromESObservable: Rx.Observable.from
+})
+
+const pomodoroSeconds = 25 * 60
+const defaultSeconds$ = new BehaviorSubject(0)
+
+/* 'started', 'paused' or 'reset' */
+const timerState$ = new BehaviorSubject('reset')
+  .distinctUntilChanged()
+
+/* A number representing the seconds that had been counted. */
+const countDown$ = timerState$
+  .map(timerState => timerState === 'reset')
+  .distinctUntilChanged()
+  .switchMap(isReset =>
+    isReset
+    ? defaultSeconds$
+    : Observable.of(Scheduler.animationFrame.now(), Scheduler.animationFrame)
+      // high accuracy timing
+      // repetitively calculate the diff
+      .repeat()
+      // extract seconds
+      .map(startTime => ~~((Date.now() - startTime) / 1000))
+      .distinctUntilChanged()
+      // pause implementation here, two lines!
+      .withLatestFrom(timerState$)
+      .filter(args => args[1] === 'started')
+      // count the output
+      .scan(count => count + 1, 0)
+      // time's up!
+      .take(pomodoroSeconds)
+  )
+
+const Title = componentFromStream(() =>
+  // distinctUntilChanged is just like shouldComponentUpdate! Yay!
+  timerState$.map(timerState => {
+    let title
+    switch (timerState) {
+      case 'started':
+        title = 'Greatness is within sight!!'
+        break
+      case 'paused':
+        title = 'Never quite, keep going!!'
+        break
+      default:
+        title = 'Let the countdown begin!!'
+        break
+    }
+    return <h2 className='title is-6'>{title}</h2>
+  })
+)
+
+const TimerBtn = pure(({ onClick, icon, ariaLabel }) => (
+  <button
+    className="button is-dark is-large"
+    onClick={onClick}
+    aria-label={ariaLabel}
+  >
+    <i className={`fas ${icon}`} />
+  </button>
+))
+
+const TimerBtnGroup = pure(() => (
+  <div>
+    <TimerBtn
+      icon='fa-play-circle'
+      ariaLabel={'Start count down'}
+      onClick={() => timerState$.next('started')} />
+    <TimerBtn
+      icon='fa-pause-circle'
+      ariaLabel={'Pause count down'}
+      onClick={() => timerState$.next('paused')} />
+    <TimerBtn
+      icon='fa-undo'
+      ariaLabel={'Reset count down'}
+      onClick={() => timerState$.next('reset')} />
+  </div>
+))
+
+const Digit = pure(({ digit }) => (
+  <div className="digit">
+    <div className="stick one" style={getRotation(digit, 0)}>
+      <div className="stick three" style={getRotation(digit, 2)}>
+        <div className="stick seven" style={getRotation(digit, 6)} />
+      </div>
+    </div>
+    <div className="stick two" style={getRotation(digit, 1)}>
+      <div className="stick four" style={getRotation(digit, 3)}>
+        <div className="stick five" style={getRotation(digit, 4)} />
+      </div>
+    </div>
+    <div className="stick six" style={getRotation(digit, 5)} />
+  </div>
+))
+
+const Timer = componentFromStream(() => countDown$.map(seconds => {
+  const secondDiff = pomodoroSeconds - seconds
+  const restMinutes = (~~(secondDiff / 60)) % 60
+  const restSeconds = (secondDiff - restMinutes * 60) % 60
+  return (
+    <div
+      className='timer'
+      role='timer'
+      aria-live={restSeconds % 10 === 0 ? 'polite' : 'off'}
+      aria-atomic='true'
+      aria-label={`${restMinutes} minutes ${restSeconds} seconds left`}
+    >
+      <Digit digit={~~(restMinutes / 10)} />
+      <Digit digit={restMinutes % 10} />
+      <div className='colon' />
+      <Digit digit={~~(restSeconds / 10)} />
+      <Digit digit={restSeconds % 10} />
+    </div>
+  )
+}))
+
+const App = () => (
+  <div className='container has-text-centered'>
+    <Title />
+    <Timer />
+    <TimerBtnGroup />
+  </div>
+)
+
+ReactDOM.render(
+  <App />,
+  document.getElementById('app')
+)
+
+function getRotation (digit, stick) {
+  let digitMap = window[Symbol.for('digit_map')]
+  if (!digitMap) {
+    digitMap = [
+      [ 90, 270,  90, 270, 270, 90,  90 ],
+      [ 90, -90,   0, 360, 360, 90,   0 ],
+      [ 90,   0,  90, 450,  90, 90,   0 ],
+      [ 90, 270,  90, 270, 360,  0,   0 ],
+      [  0, 270, 270, 360, 360, 90,   0 ],
+      [  0, 270, 270, 270, 360,  0, 270 ],
+      [  0, 270, -90, 270, 270,  0, -90 ],
+      [ 90, 270,  90, 360, 360, 90,   0 ],
+      [ 90, 270,  90, 270, 270,  0,  90 ],
+      [ 90, 270,  90, 360, 360,  0,  90 ],
+    ].map(d => d.map(s => ({ transform: `rotate(${s}deg)` })))
+    window[Symbol.for('digit_map')] = digitMap
+  }
+  return digitMap[digit][stick]
+}
